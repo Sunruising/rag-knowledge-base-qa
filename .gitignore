@@ -1,0 +1,8 @@
+.venv/
+.env
+data/chroma/
+data/docs/*
+!data/docs/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store

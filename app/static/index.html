@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG 知识库问答</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background: #f5f6f8; color: #1f2329; height: 100vh; display: flex; }
+    .sidebar { width: 280px; background: #fff; border-right: 1px solid #e5e6eb;
+               padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .main { flex: 1; display: flex; flex-direction: column; }
+    h1 { font-size: 17px; }
+    h1 small { color: #86909c; font-weight: normal; font-size: 12px; display: block; margin-top: 4px; }
+    .upload-box { border: 2px dashed #c9cdd4; border-radius: 8px; padding: 18px;
+                  text-align: center; cursor: pointer; color: #4e5969; font-size: 13px; transition: .2s; }
+    .upload-box:hover { border-color: #165dff; color: #165dff; }
+    .doc-list { flex: 1; overflow-y: auto; font-size: 13px; }
+    .doc-list .label { color: #86909c; margin-bottom: 8px; }
+    .doc-item { background: #f2f3f5; border-radius: 6px; padding: 6px 10px; margin-bottom: 6px;
+                display: flex; justify-content: space-between; }
+    .doc-item span:last-child { color: #86909c; }
+    .btn { border: none; border-radius: 6px; padding: 8px; font-size: 13px; cursor: pointer; }
+    .btn-reset { background: #f2f3f5; color: #4e5969; }
+    .btn-reset:hover { background: #e5e6eb; }
+    .chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+    .msg { max-width: 720px; }
+    .msg.user { align-self: flex-end; }
+    .bubble { padding: 12px 16px; border-radius: 10px; line-height: 1.7; white-space: pre-wrap; }
+    .user .bubble { background: #165dff; color: #fff; }
+    .bot .bubble { background: #fff; border: 1px solid #e5e6eb; }
+    .sources { margin-top: 8px; font-size: 12px; color: #86909c; }
+    .source-tag { display: inline-block; background: #f2f3f5; border-radius: 4px;
+                  padding: 2px 8px; margin: 3px 4px 0 0; }
+    .empty { color: #86909c; text-align: center; margin-top: 80px; font-size: 14px; line-height: 2; }
+    .input-bar { border-top: 1px solid #e5e6eb; background: #fff; padding: 16px 24px; display: flex; gap: 10px; }
+    .input-bar input { flex: 1; border: 1px solid #c9cdd4; border-radius: 8px; padding: 10px 14px; font-size: 14px; outline: none; }
+    .input-bar input:focus { border-color: #165dff; }
+    .input-bar button { background: #165dff; color: #fff; border: none; border-radius: 8px; padding: 0 22px; cursor: pointer; }
+    .input-bar button:disabled { background: #94bfff; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h1>RAG 知识库问答<small>上传文档，AI 只依据你的资料回答</small></h1>
+    <label class="upload-box">
+      📄 点击上传文档<br /><span style="font-size:11px">支持 .txt / .md / .pdf</span>
+      <input type="file" id="fileInput" accept=".txt,.md,.pdf" hidden />
+    </label>
+    <div class="doc-list">
+      <div class="label">已入库文档</div>
+      <div id="docList"></div>
+    </div>
+    <button class="btn btn-reset" id="resetBtn">清空知识库</button>
+  </div>
+
+  <div class="main">
+    <div class="chat" id="chat">
+      <div class="empty" id="empty">
+        👈 先在左侧上传一份文档<br />然后在下方提问，AI 会基于文档内容回答<br />
+        <span style="font-size:12px">问资料外的问题，它会老实说"无法回答"</span>
+      </div>
+    </div>
+    <div class="input-bar">
+      <input id="qInput" placeholder="基于已上传文档提问…" />
+      <button id="askBtn">发送</button>
+    </div>
+  </div>
+
+  <script>
+    const chat = document.getElementById('chat');
+    const empty = document.getElementById('empty');
+    const qInput = document.getElementById('qInput');
+    const askBtn = document.getElementById('askBtn');
+
+    async function refreshStatus() {
+      const r = await fetch('/api/status').then(r => r.json());
+      const list = document.getElementById('docList');
+      list.innerHTML = r.docs.length
+        ? r.docs.map(d => `<div class="doc-item"><span>${d}</span></div>`).join('')
+        : '<div style="color:#c9cdd4;font-size:12px">暂无</div>';
+    }
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData(); fd.append('file', file);
+      addMsg('bot', `正在解析并入库「${file.name}」…`);
+      try {
+        const r = await fetch('/api/upload', { method: 'POST', body: fd }).then(r => r.json());
+        if (r.detail) throw new Error(r.detail);
+        lastBot().querySelector('.bubble').textContent = `✅「${r.filename}」已入库，切成 ${r.chunks} 段，可以开始提问了。`;
+        refreshStatus();
+      } catch (err) {
+        lastBot().querySelector('.bubble').textContent = '❌ 上传失败：' + err.message;
+      }
+      e.target.value = '';
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', async () => {
+      if (!confirm('确定清空整个知识库？')) return;
+      await fetch('/api/reset', { method: 'POST' });
+      refreshStatus();
+      addMsg('bot', '知识库已清空。');
+    });
+
+    askBtn.addEventListener('click', ask);
+    qInput.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+
+    async function ask() {
+      const q = qInput.value.trim();
+      if (!q) return;
+      addMsg('user', q);
+      qInput.value = '';
+      askBtn.disabled = true;
+      addMsg('bot', '思考中…');
+      try {
+        const r = await fetch('/api/ask', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q })
+        }).then(r => r.json());
+        const bubble = lastBot().querySelector('.bubble');
+        bubble.textContent = r.answer || '(无返回)';
+        if (r.sources && r.sources.length) {
+          const src = document.createElement('div');
+          src.className = 'sources';
+          src.innerHTML = '📎 依据：' + r.sources
+            .map(s => `<span class="source-tag">${s.source} · 相关度${s.score}</span>`).join('');
+          lastBot().appendChild(src);
+        }
+      } catch (err) {
+        lastBot().querySelector('.bubble').textContent = '❌ 出错：' + err.message;
+      }
+      askBtn.disabled = false;
+    }
+
+    function addMsg(role, text) {
+      empty.style.display = 'none';
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.innerHTML = `<div class="bubble"></div>`;
+      div.querySelector('.bubble').textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+    function lastBot() { return [...document.querySelectorAll('.msg.bot')].pop(); }
+
+    refreshStatus();
+  </script>
+</body>
+</html>

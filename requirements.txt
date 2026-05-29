@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+python-dotenv>=1.0
+openai>=1.30
+chromadb>=0.5
+transformers>=4.40
+torch>=2.0
+pypdf>=4.0
